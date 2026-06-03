@@ -40,12 +40,18 @@ all = ["tendwell[llm,context,server,mcp,prometheus]"]
 tendwell = "tendwell.__main__:main"
 
 [dependency-groups]
+# The dev group installs the Phase 1 runtime deps too, so CI can exercise the
+# real wiring (Chroma store, Prometheus adapter) end to end with faked LLM and
+# embeddings - no network, no real model - and so mypy type-checks every module.
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.4",
     "mypy>=1.10",
     "types-pyyaml>=6.0",
+    "openai>=1.30",
+    "httpx>=0.27",
+    "chromadb>=0.5",
 ]
 
 [build-system]
@@ -79,3 +85,8 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
+
+# Third-party packages without bundled type information.
+[[tool.mypy.overrides]]
+module = ["chromadb.*"]
+ignore_missing_imports = true

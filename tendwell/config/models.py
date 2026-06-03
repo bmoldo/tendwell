@@ -60,6 +60,9 @@ class LLMConfig(_Strict):
     context_window: int = 32768
     params: dict[str, object] = Field(default_factory=_default_llm_params)
     capabilities: Capabilities = Field(default_factory=Capabilities)
+    # ReAct fallback only: how many times to re-prompt a single step when the
+    # model emits a malformed action/answer before degrading gracefully.
+    fallback_max_retries: int = 2
 
 
 class EmbeddingsConfig(_Strict):
@@ -110,6 +113,26 @@ class PrometheusSourceConfig(DataSourceConfig):
 
     type: Literal["prometheus"] = "prometheus"
     queries: list[PrometheusQuery] = Field(default_factory=list)
+
+
+class SyntheticQuery(_Strict):
+    """A named synthetic metric the demo source can generate."""
+
+    id: str
+
+
+class SyntheticSourceConfig(DataSourceConfig):
+    """Config shape of the synthetic demo data source.
+
+    ``scenario`` selects whether generated signal keeps every SLO healthy or
+    breaches one, so the agent has something real to find. ``seed`` makes
+    generation deterministic for stable CI assertions.
+    """
+
+    type: Literal["synthetic"] = "synthetic"
+    scenario: Literal["healthy", "degraded"] = "healthy"
+    seed: int = 0
+    queries: list[SyntheticQuery] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

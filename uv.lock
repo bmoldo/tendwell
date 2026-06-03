@@ -2764,7 +2764,10 @@ server = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "chromadb" },
+    { name = "httpx" },
     { name = "mypy" },
+    { name = "openai" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
@@ -2788,7 +2791,10 @@ provides-extras = ["llm", "context", "server", "mcp", "prometheus", "all"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "chromadb", specifier = ">=0.5" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", specifier = ">=1.10" },
+    { name = "openai", specifier = ">=1.30" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.23" },
     { name = "ruff", specifier = ">=0.4" },
