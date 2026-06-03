@@ -135,6 +135,42 @@ class SyntheticSourceConfig(DataSourceConfig):
     queries: list[SyntheticQuery] = Field(default_factory=list)
 
 
+class LokiQuery(_Strict):
+    """A named LogQL range query."""
+
+    id: str
+    logql: str
+    limit: int = 100
+    range_seconds: int = 300
+
+
+class LokiSourceConfig(DataSourceConfig):
+    """Config shape of the Loki logs adapter."""
+
+    type: Literal["loki"] = "loki"
+    queries: list[LokiQuery] = Field(default_factory=list)
+
+
+class HttpJsonQuery(_Strict):
+    """A named query against a JSON HTTP endpoint.
+
+    ``path`` is appended to the source endpoint; ``value_path`` is a
+    dot-separated path into the JSON response that points at a numeric value
+    (list indices are written as integers, for example ``data.0.value``).
+    """
+
+    id: str
+    path: str = ""
+    value_path: str
+
+
+class HttpJsonSourceConfig(DataSourceConfig):
+    """Config shape of the generic HTTP/JSON metrics adapter."""
+
+    type: Literal["http_json"] = "http_json"
+    queries: list[HttpJsonQuery] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # SLOs
 # ---------------------------------------------------------------------------
@@ -179,12 +215,82 @@ class ContextConfig(_Strict):
 # ---------------------------------------------------------------------------
 # Permissions and security
 # ---------------------------------------------------------------------------
+# Substrings that may not appear in an action name. Tendwell's own config, the
+# action allowlist, the audit log, the approval mechanism, and credentials are
+# structurally untargetable: you cannot even declare an action that names them.
+RESERVED_ACTION_SUBSTRINGS = frozenset(
+    {"config", "allowlist", "audit", "approval", "approve", "credential", "secret"}
+)
+
+
+class ActionParamSpec(_Strict):
+    """Typed schema for one declared action argument."""
+
+    type: Literal["string", "integer", "number", "boolean"] = "string"
+    required: bool = True
+
+
 class ActionConfig(_Strict):
-    """An opt-in, scoped, approval-gated action capability."""
+    """An opt-in, scoped, human-gated action capability.
+
+    Actions do not exist unless declared here. Each has a stable name, a typed
+    argument schema, and a scope (the set of targets it may touch). Approval is
+    mandatory and cannot be turned off: auto-approval is deliberately not
+    available in the open core.
+    """
 
     name: str
     require_approval: bool = True
     scope: list[str] = Field(default_factory=list)
+    parameters: dict[str, ActionParamSpec] = Field(default_factory=dict)
+    idempotent: bool = False
+    max_targets: int | None = None
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_reserved(cls, value: str) -> str:
+        lowered = value.lower()
+        for token in RESERVED_ACTION_SUBSTRINGS:
+            if token in lowered:
+                raise ValueError(
+                    f"action name {value!r} references the reserved subsystem "
+                    f"{token!r}; Tendwell's config, allowlist, audit log, approval "
+                    "mechanism, and credentials are structurally untargetable"
+                )
+        return value
+
+    @field_validator("require_approval")
+    @classmethod
+    def _approval_is_mandatory(cls, value: bool) -> bool:
+        if value is False:
+            raise ValueError(
+                "actions are human-approval-gated; 'require_approval: false' "
+                "(auto-approval) is not available in the open core"
+            )
+        return value
+
+
+class RateLimitConfig(_Strict):
+    """Cap on executed actions within a sliding window."""
+
+    max_actions: int = 5
+    window_seconds: float = 60.0
+
+
+class CircuitBreakerConfig(_Strict):
+    """Trip after repeated execution failures to stop a flapping loop."""
+
+    failure_threshold: int = 3
+
+
+class ActionSafetyConfig(_Strict):
+    """Containment controls for the action surface."""
+
+    rate_limit: RateLimitConfig = Field(default_factory=RateLimitConfig)
+    circuit_breaker: CircuitBreakerConfig = Field(default_factory=CircuitBreakerConfig)
+    # When set, the presence of this file engages the kill switch: all pending
+    # and future executions halt immediately, independent of config reload.
+    kill_switch_file: str | None = None
 
 
 class AuditConfig(_Strict):
@@ -213,6 +319,7 @@ class PermissionsConfig(_Strict):
 
     mode: Literal["read_only", "actions_enabled"] = "read_only"
     actions: list[ActionConfig] = Field(default_factory=list)
+    safety: ActionSafetyConfig = Field(default_factory=ActionSafetyConfig)
     audit: AuditConfig = Field(default_factory=AuditConfig)
 
 
