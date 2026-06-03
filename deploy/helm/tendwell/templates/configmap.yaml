@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "tendwell.fullname" . }}
+  labels:
+    {{- include "tendwell.labels" . | nindent 4 }}
+data:
+  tendwell.yaml: |
+    {{- toYaml .Values.config | nindent 4 }}

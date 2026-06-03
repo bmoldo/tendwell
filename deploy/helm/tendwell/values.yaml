@@ -1,0 +1,131 @@
+# Default values for tendwell.
+# This is a YAML-formatted file.
+# Values are rendered with standard Helm conventions.
+#
+# The default install is SECURE BY DEFAULT and LOCAL-FIRST:
+#   - read-only permissions mode
+#   - a synthetic data source (no external systems)
+#   - a stub LLM provider and a hash embeddings provider (no model, no egress)
+# Pointing Tendwell at real data sources or models is an EXPLICIT override.
+
+# Number of Tendwell replicas. The monitoring daemon is single-instance.
+replicaCount: 1
+
+image:
+  # Container image repository. Override with your own registry/path.
+  repository: ghcr.io/bmoldo/tendwell
+  # Image tag. Defaults to the chart appVersion when left empty.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Image pull secrets for private registries (list of {name: secret-name}).
+imagePullSecrets: []
+
+# Override the chart name / fullname if needed.
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Create a dedicated ServiceAccount for the workload.
+  create: true
+  # If create is false, set the name of an existing ServiceAccount to use.
+  name: ""
+  # Annotations to add to the ServiceAccount.
+  annotations: {}
+
+# Annotations to add to the pod.
+podAnnotations: {}
+
+# Pod-level security context. Secure by default: non-root with a dedicated uid/gid.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+# Container-level security context. Secure by default: read-only root filesystem,
+# no privilege escalation, all capabilities dropped.
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# Resource requests and limits. Sane small defaults for the monitoring daemon.
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+# Extra environment variables, injected by reference -- NEVER inline secrets here.
+# The config below references credentials by env-var name via *_env fields, so an
+# operator sets those env vars from a Secret. Example (value from a Secret):
+#   extraEnv:
+#     - name: OPENAI_API_KEY
+#       valueFrom:
+#         secretKeyRef:
+#           name: tendwell-secrets
+#           key: openai-api-key
+extraEnv: []
+
+# Bulk-import environment from Secrets / ConfigMaps by reference.
+# This is the recommended way to inject API keys and data-source tokens.
+# Example:
+#   envFrom:
+#     - secretRef:
+#         name: tendwell-secrets
+#     - configMapRef:
+#         name: tendwell-env
+envFrom: []
+
+# Tendwell configuration. Rendered verbatim into the ConfigMap as tendwell.yaml
+# and mounted at /etc/tendwell/tendwell.yaml. To customize, override this whole
+# block from your own values file.
+#
+# The defaults below need NO model and NO network egress.
+config:
+  permissions:
+    # read_only is the safe default. Broader modes are an explicit override.
+    mode: read_only
+  server:
+    # The chart runs the monitoring daemon; it analyzes on this interval.
+    mode: daemon
+    interval_seconds: 300
+  data_sources:
+    - name: demo
+      type: synthetic
+      seed: 7
+      # Synthetic generator runs a degraded scenario for the queries below.
+      scenario: degraded
+      queries:
+        - id: error_rate
+        - id: latency_p99
+  slos:
+    - name: availability
+      metric: error_rate
+      threshold: 0.01
+      direction: below
+    - name: latency
+      metric: latency_p99
+      threshold: 0.5
+      direction: below
+  context:
+    vector_store:
+      type: memory
+  llm:
+    # stub provider: deterministic, no external model, no egress.
+    provider: stub
+  embeddings:
+    # hash provider: local embeddings, no model download, no egress.
+    provider: hash
+
+# Node scheduling controls.
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,25 @@
+Tendwell has been installed.
+
+Release name: {{ .Release.Name }}
+Namespace:    {{ .Release.Namespace }}
+
+This default install is SECURE BY DEFAULT and LOCAL-FIRST:
+  - permissions mode is read_only
+  - the data source is synthetic (no external systems)
+  - the LLM provider is "stub" and embeddings provider is "hash"
+    (no model, no network egress)
+
+Pointing Tendwell at real data sources or models is an explicit override --
+see the chart README.
+
+The workload runs the continuous monitoring daemon, which analyzes on an interval
+and writes findings to its logs (it serves no HTTP). Follow the reports with:
+
+  export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} \
+    -l "app.kubernetes.io/name={{ include "tendwell.name" . }},app.kubernetes.io/instance={{ .Release.Name }}" \
+    -o jsonpath="{.items[0].metadata.name}")
+
+  kubectl --namespace {{ .Release.Namespace }} logs -f $POD_NAME
+
+To inject secrets (API keys, data-source tokens), do NOT inline them. Reference a
+Secret via envFrom or extraEnv -- see values.yaml and the chart README.

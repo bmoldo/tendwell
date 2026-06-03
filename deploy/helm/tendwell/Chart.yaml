@@ -1,0 +1,6 @@
+apiVersion: v2
+name: tendwell
+description: A self-hosted, local-first AgentOps tool. Secure by default -- runs read-only and local-first with a stub model and no external egress unless explicitly overridden.
+type: application
+version: 0.1.0
+appVersion: "0.0.1"
