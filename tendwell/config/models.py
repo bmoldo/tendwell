@@ -355,6 +355,8 @@ class ServerConfig(_Strict):
     mode: Literal["daemon", "on_demand", "mcp", "cli"] = "daemon"
     host: str = "127.0.0.1"
     port: int = 8080
+    # Daemon mode only: seconds between successive health analyses.
+    interval_seconds: int = 300
     auth: ServerAuthConfig = Field(default_factory=ServerAuthConfig)
 
 

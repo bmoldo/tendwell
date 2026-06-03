@@ -13,6 +13,7 @@
 # LLM backend - any OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, etc.)
 # ----------------------------------------------------------------------------
 llm:
+  provider: openai                      # openai (any OpenAI-compatible endpoint) | stub (no-network demo)
   base_url: http://localhost:11434/v1
   model: qwen2.5:14b
   api_key_env: TENDWELL_LLM_API_KEY     # optional for local; read from env
@@ -21,8 +22,10 @@ llm:
     temperature: 0.1
   capabilities:
     native_tool_calling: true           # false -> prompt-based ReAct fallback
+  fallback_max_retries: 2               # ReAct fallback only
 
 embeddings:
+  provider: openai                      # openai | hash (deterministic, no-network demo embedder)
   base_url: http://localhost:11434/v1
   model: nomic-embed-text
   api_key_env: TENDWELL_EMBED_API_KEY   # optional for local
@@ -74,7 +77,7 @@ slos:
 # ----------------------------------------------------------------------------
 context:
   vector_store:
-    type: chroma                        # chroma | pgvector | qdrant
+    type: chroma                        # chroma | memory (in-process) | pgvector | qdrant
     path: ./data/vectors                # local persistence by default
   loaders:
     - type: markdown
@@ -101,6 +104,7 @@ server:
   mode: daemon                          # daemon | on_demand | mcp | cli
   host: 127.0.0.1
   port: 8080
+  interval_seconds: 300                 # daemon mode: seconds between analyses
   auth:
     mode: none                          # core: none | basic
 
