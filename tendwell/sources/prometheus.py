@@ -24,22 +24,20 @@ from tendwell.interfaces.data_source import (
     QueryResult,
     SignalKind,
 )
+from tendwell.sources.errors import (
+    DataSourceError,
+    QueryError,
+    SourceAuthError,
+    SourceUnreachable,
+)
 
-
-class DataSourceError(Exception):
-    """Base class for data-source failures."""
-
-
-class SourceUnreachable(DataSourceError):
-    """The backend could not be reached (network, DNS, timeout)."""
-
-
-class SourceAuthError(DataSourceError):
-    """The backend rejected the credentials."""
-
-
-class QueryError(DataSourceError):
-    """The backend rejected the query or returned an error payload."""
+__all__ = [
+    "DataSourceError",
+    "PrometheusDataSource",
+    "QueryError",
+    "SourceAuthError",
+    "SourceUnreachable",
+]
 
 
 def _parse_vector(data: dict[str, object], retrieved_at: datetime) -> list[MetricSample]:
