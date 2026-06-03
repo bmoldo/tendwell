@@ -36,3 +36,75 @@ jobs:
 
       - name: Test
         run: uv run pytest
+
+  hygiene:
+    # Repository-wide cleanliness gate: ASCII-only (no emojis), and no internal
+    # or prior-environment names anywhere in the tracked source.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ASCII-only (no emojis or smart punctuation)
+        run: |
+          if git grep -nIP "[^\x00-\x7F]" -- . ; then
+            echo "Non-ASCII characters found (see above)."
+            exit 1
+          fi
+          echo "ASCII-only: clean."
+
+      - name: No internal or prior-environment names
+        # Exclude this workflow file, which necessarily contains the patterns.
+        run: |
+          if git grep -niE "argus|pokerstars|flutter|reops" -- . ':!.github/workflows/ci.yml' ; then
+            echo "Forbidden internal/prior-environment reference found (see above)."
+            exit 1
+          fi
+          echo "No internal names: clean."
+
+  docker:
+    # Build the image and smoke-run the instant tier: it must produce a real
+    # report with no model and no network, as a non-root container.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t tendwell:ci .
+
+      - name: Smoke-run the instant demo
+        run: |
+          docker run --rm tendwell:ci | tee /tmp/out.txt
+          grep -q "Production health" /tmp/out.txt
+
+      - name: Verify the container runs as non-root
+        run: |
+          uid="$(docker run --rm --entrypoint id tendwell:ci -u)"
+          test "$uid" = "10001"
+
+  helm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Helm lint
+        run: helm lint ./deploy/helm/tendwell
+
+      - name: Helm template
+        run: helm template tendwell ./deploy/helm/tendwell
+
+  terraform:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform fmt
+        run: terraform -chdir=deploy/terraform fmt -check -recursive
+
+      - name: Terraform validate
+        run: |
+          terraform -chdir=deploy/terraform init -backend=false
+          terraform -chdir=deploy/terraform validate

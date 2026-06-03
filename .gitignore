@@ -23,6 +23,12 @@ data/
 .env
 *.local.yaml
 
+# Terraform (module init artifacts and state; never commit state)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+
 # Editor / OS
 .idea/
 .vscode/
