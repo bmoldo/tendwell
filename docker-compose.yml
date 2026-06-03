@@ -1,0 +1,55 @@
+# Tendwell demo stack.
+#
+# Instant tier (default):   docker compose up
+#   Runs Tendwell against the synthetic source with a stub model. Produces a real
+#   health report in seconds - no model download, no egress.
+#
+# Real-model tier:          docker compose --profile model up
+#   Adds an Ollama service, pulls a small model once (a few hundred MB to ~1 GB),
+#   and runs the same scenario with genuine model-driven narrative.
+
+services:
+  tendwell:
+    build: .
+    image: tendwell:local
+    command: ["run", "--config", "examples/demo-instant.yaml"]
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["model"]
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # One-shot: pull the small demo model, then exit. The honest, one-time cost.
+  model-pull:
+    image: ollama/ollama:latest
+    profiles: ["model"]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull", "qwen2.5:1.5b"]
+    restart: "no"
+
+  tendwell-model:
+    build: .
+    image: tendwell:local
+    profiles: ["model"]
+    depends_on:
+      model-pull:
+        condition: service_completed_successfully
+    command: ["run", "--config", "examples/demo-model.yaml"]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  ollama:
