@@ -32,20 +32,29 @@ jobs:
             -H 'Content-Type: application/json' \
             -d "$(jq -n --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" '{username:$u,password:$p}')" \
             | jq -r .token)
+          echo "auth token length: ${#token}"
 
           short="Self-hosted, local-first AgentOps: monitors production health; human-gated, audited actions."
-          payload=$(jq -n \
-            --arg d "$short" \
-            --rawfile f deploy/docker/overview.md \
-            '{description:$d, full_description:$f,
-              categories:[
-                {name:"Monitoring & observability", slug:"monitoring-and-observability"},
-                {name:"Machine learning & AI", slug:"machine-learning-and-ai"}
-              ]}')
 
-          code=$(curl -sS -X PATCH "https://hub.docker.com/v2/repositories/$REPO/" \
+          # Description + overview (the primary goal; this step decides pass/fail).
+          desc_payload=$(jq -n --arg d "$short" --rawfile f deploy/docker/overview.md \
+            '{description:$d, full_description:$f}')
+          desc_code=$(curl -sS -X PATCH "https://hub.docker.com/v2/repositories/$REPO/" \
             -H "Authorization: JWT $token" -H 'Content-Type: application/json' \
-            -d "$payload" -o /tmp/resp.json -w '%{http_code}')
-          echo "PATCH HTTP $code"
-          jq '{description, categories}' /tmp/resp.json || cat /tmp/resp.json
-          test "$code" = "200"
+            -d "$desc_payload" -o /tmp/desc.json -w '%{http_code}')
+          echo "description+overview: HTTP $desc_code"
+          head -c 300 /tmp/desc.json; echo
+
+          # Categories (best-effort; does not fail the job).
+          cat_payload=$(jq -n \
+            '{categories:[
+              {name:"Monitoring & observability", slug:"monitoring-and-observability"},
+              {name:"Machine learning & AI", slug:"machine-learning-and-ai"}
+            ]}')
+          cat_code=$(curl -sS -X PATCH "https://hub.docker.com/v2/repositories/$REPO/" \
+            -H "Authorization: JWT $token" -H 'Content-Type: application/json' \
+            -d "$cat_payload" -o /tmp/cat.json -w '%{http_code}')
+          echo "categories: HTTP $cat_code"
+          head -c 300 /tmp/cat.json; echo
+
+          test "$desc_code" = "200"
