@@ -1,0 +1,51 @@
+name: dockerhub-overview
+
+# Sync the Docker Hub repository short description, overview (full description),
+# and categories for bmoldovan/tendwell. Runs on a manual trigger or when the
+# overview file changes. Uses the DOCKERHUB_USERNAME and DOCKERHUB_TOKEN secrets.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - deploy/docker/overview.md
+      - .github/workflows/dockerhub-overview.yml
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      REPO: bmoldovan/tendwell
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync description, overview, and categories
+        run: |
+          set -euo pipefail
+          token=$(curl -fsS -X POST https://hub.docker.com/v2/users/login \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -n --arg u "$DOCKERHUB_USERNAME" --arg p "$DOCKERHUB_TOKEN" '{username:$u,password:$p}')" \
+            | jq -r .token)
+
+          short="Self-hosted, local-first AgentOps: monitors production health; human-gated, audited actions."
+          payload=$(jq -n \
+            --arg d "$short" \
+            --rawfile f deploy/docker/overview.md \
+            '{description:$d, full_description:$f,
+              categories:[
+                {name:"Monitoring & observability", slug:"monitoring-and-observability"},
+                {name:"Machine learning & AI", slug:"machine-learning-and-ai"}
+              ]}')
+
+          code=$(curl -sS -X PATCH "https://hub.docker.com/v2/repositories/$REPO/" \
+            -H "Authorization: JWT $token" -H 'Content-Type: application/json' \
+            -d "$payload" -o /tmp/resp.json -w '%{http_code}')
+          echo "PATCH HTTP $code"
+          jq '{description, categories}' /tmp/resp.json || cat /tmp/resp.json
+          test "$code" = "200"
