@@ -9,11 +9,12 @@ It is built for self-hosted, security-conscious, and regulated environments.
 The headline guarantee: **local-first, your data never leaves your
 infrastructure** by default, including the LLM and embeddings.
 
-> Status: early development. Phases 0 and 1 are in place: the four interfaces and
-> typed config, the Prometheus and synthetic data sources, the OpenAI-compatible
-> LLM backend with a prompt-based ReAct fallback, the Chroma context store with a
-> markdown loader, the read-only agent loop, and an on-demand `run` path against a
-> zero-infrastructure demo stack. Packaging and more adapters land next. See the
+> Status: early development. Phases 0-2 are in place: the four interfaces and
+> typed config; the Prometheus, Loki, generic HTTP/JSON, and synthetic data
+> sources; the OpenAI-compatible LLM backend with a prompt-based ReAct fallback;
+> the Chroma context store with a markdown loader; the read-only agent loop with
+> an on-demand `run` path; and a human-gated, audited action surface where the
+> model can only propose. Packaging and the documentation set land next. See the
 > build roadmap in [`CLAUDE.md`](CLAUDE.md).
 
 ## What it is
