@@ -9,9 +9,12 @@ It is built for self-hosted, security-conscious, and regulated environments.
 The headline guarantee: **local-first, your data never leaves your
 infrastructure** by default, including the LLM and embeddings.
 
-> Status: early development. Phase 0 (interfaces and configuration) is in place;
-> the Prometheus adapter, LLM backend, context store, and demo stack land next.
-> See the build roadmap in [`CLAUDE.md`](CLAUDE.md).
+> Status: early development. Phases 0 and 1 are in place: the four interfaces and
+> typed config, the Prometheus and synthetic data sources, the OpenAI-compatible
+> LLM backend with a prompt-based ReAct fallback, the Chroma context store with a
+> markdown loader, the read-only agent loop, and an on-demand `run` path against a
+> zero-infrastructure demo stack. Packaging and more adapters land next. See the
+> build roadmap in [`CLAUDE.md`](CLAUDE.md).
 
 ## What it is
 
@@ -60,6 +63,20 @@ uv run tendwell validate tendwell.example.yaml
 
 The default configuration is local-first; if you point the LLM, embeddings, or a
 data source at a remote address, Tendwell warns you explicitly.
+
+## Demo (zero infrastructure)
+
+The demo runs the agent end to end against a synthetic data source in a degraded
+scenario, with the bundled runbook corpus, using a local OpenAI-compatible model.
+With a local runtime such as Ollama serving a model and an embedding model:
+
+```
+tendwell run --config examples/demo.yaml
+```
+
+`examples/demo-react.yaml` is identical but declares no native tool calling, so
+the agent drives tools through the prompt-based ReAct fallback. Both configs are
+local-first and send nothing off-host.
 
 ## Development
 
