@@ -1,0 +1,121 @@
+# Tendwell configuration - example / template
+#
+# This is the clean, environment-agnostic target. Nothing here names a
+# specific company, environment, or service. Every value is either a sane
+# default or a placeholder the operator fills in. Secrets are never inline;
+# they are referenced by environment variable or secret-manager path.
+#
+# The defaults below are local-first: every endpoint points at localhost, so
+# out of the box no data leaves the host. Point any base_url or endpoint at a
+# remote address and Tendwell warns you explicitly at startup.
+
+# ----------------------------------------------------------------------------
+# LLM backend - any OpenAI-compatible endpoint (Ollama, vLLM, LiteLLM, etc.)
+# ----------------------------------------------------------------------------
+llm:
+  base_url: http://localhost:11434/v1
+  model: qwen2.5:14b
+  api_key_env: TENDWELL_LLM_API_KEY     # optional for local; read from env
+  context_window: 32768
+  params:
+    temperature: 0.1
+  capabilities:
+    native_tool_calling: true           # false -> prompt-based ReAct fallback
+
+embeddings:
+  base_url: http://localhost:11434/v1
+  model: nomic-embed-text
+  api_key_env: TENDWELL_EMBED_API_KEY   # optional for local
+
+# ----------------------------------------------------------------------------
+# Data sources - pluggable adapters. Add as many as needed.
+# `type` selects the adapter; the rest of each entry is adapter-specific.
+# ----------------------------------------------------------------------------
+data_sources:
+  - name: metrics
+    type: prometheus
+    endpoint: ${PROMETHEUS_URL}         # e.g. http://localhost:9090
+    auth:
+      mode: none                        # none | bearer | basic
+      token_env: PROMETHEUS_TOKEN       # used when mode != none
+    # Queries are operator-defined, not baked into the code. Keep these generic;
+    # do not embed environment-specific service names unless this deployment is
+    # for that environment.
+    queries:
+      - id: error_rate
+        promql: 'sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))'
+      - id: latency_p99
+        promql: 'histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))'
+
+  # Example additional adapters (enable as implemented):
+  # - name: logs
+  #   type: loki
+  #   endpoint: ${LOKI_URL}
+  # - name: cloud
+  #   type: cloudwatch
+  #   region: ${AWS_REGION}
+
+# ----------------------------------------------------------------------------
+# SLOs / thresholds - what "unhealthy" means, operator-defined.
+# `direction` names the side of the threshold that is HEALTHY.
+# ----------------------------------------------------------------------------
+slos:
+  - name: availability
+    metric: error_rate
+    threshold: 0.01                     # 1% error budget
+    direction: below                    # healthy below threshold; alert above
+  - name: latency
+    metric: latency_p99
+    threshold: 0.5                      # seconds
+    direction: below
+
+# ----------------------------------------------------------------------------
+# Knowledge context - runbooks, postmortems, topology. Local-first by default.
+# ----------------------------------------------------------------------------
+context:
+  vector_store:
+    type: chroma                        # chroma | pgvector | qdrant
+    path: ./data/vectors                # local persistence by default
+  loaders:
+    - type: markdown
+      path: ./knowledge                 # directory of runbooks/postmortems
+      refresh: 3600                     # seconds; how often to re-index
+
+# ----------------------------------------------------------------------------
+# Permissions - read-only by default. Actions are opt-in and gated.
+# ----------------------------------------------------------------------------
+permissions:
+  mode: read_only                       # read_only | actions_enabled
+  # When actions_enabled, each action is individually allowed and gated.
+  actions: []
+    # - name: restart_service
+    #   require_approval: true          # human approval before execution
+    #   scope: ["service-a"]
+  audit:
+    enabled: true                       # always on for any action; cannot be disabled
+
+# ----------------------------------------------------------------------------
+# Output / serving
+# ----------------------------------------------------------------------------
+server:
+  mode: daemon                          # daemon | on_demand | mcp | cli
+  host: 127.0.0.1
+  port: 8080
+  auth:
+    mode: none                          # core: none | basic
+
+notifications: []
+  # - type: slack
+  #   webhook_env: SLACK_WEBHOOK_URL
+  # - type: webhook
+  #   url_env: ALERT_WEBHOOK_URL
+
+# ----------------------------------------------------------------------------
+# Agent behavior - persona/framing is tunable within guardrails.
+# ----------------------------------------------------------------------------
+agent:
+  persona: >
+    You are a production health analyst. You observe metrics, logs, and
+    knowledge context, and you report findings clearly. You do not take
+    actions unless explicitly permitted and approved.
+  max_reasoning_steps: 10

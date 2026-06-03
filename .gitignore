@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments / uv
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local runtime data (vector store, indexes, demo artifacts)
+data/
+*.log
+
+# Secrets must never be committed. They are injected via env or secret manager.
+.env
+*.local.yaml
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
