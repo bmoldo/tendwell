@@ -30,9 +30,10 @@ jobs:
         run: uvx twine check dist/*
 
       - name: Publish to PyPI
-        # --check-url skips files already on the index, so re-running a tag does
-        # not fail on an already-published version.
-        run: uv publish --check-url https://pypi.org/simple/tendwell/ --token "${{ secrets.TENDWELL_PYPI }}"
+        # --check-url points at the simple index ROOT; uv appends the package
+        # name and skips files already present, so re-running a tag does not fail
+        # on an already-published version.
+        run: uv publish --check-url https://pypi.org/simple/ --token "${{ secrets.TENDWELL_PYPI }}"
 
   docker:
     runs-on: ubuntu-latest
