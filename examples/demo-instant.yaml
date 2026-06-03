@@ -1,0 +1,57 @@
+# Tendwell instant demo - zero infrastructure, no model download.
+#
+# This is the instant tier of the docker compose demo. It uses a stub model and
+# a deterministic hash embedder, so `tendwell run` against it produces a real
+# health report immediately: the SLO evaluation and the cited runbooks are real,
+# only the narrative is a fixed note. Add a local model (see examples/demo.yaml)
+# for genuine model-driven analysis.
+#
+# Fully local-first: no network, no egress, nothing downloaded.
+#
+# Run it:  tendwell run --config examples/demo-instant.yaml
+
+llm:
+  provider: stub            # no-network demo backend; default is 'openai'
+
+embeddings:
+  provider: hash            # deterministic, no-network embedder; default is 'openai'
+
+data_sources:
+  - name: demo
+    type: synthetic
+    scenario: degraded
+    seed: 7
+    queries:
+      - id: error_rate
+      - id: latency_p99
+
+slos:
+  - name: availability
+    metric: error_rate
+    threshold: 0.01
+    direction: below
+  - name: latency
+    metric: latency_p99
+    threshold: 0.5
+    direction: below
+
+context:
+  vector_store:
+    type: memory            # dependency-free in-process store
+  loaders:
+    - type: markdown
+      path: tendwell/demo/knowledge
+
+permissions:
+  mode: read_only
+
+server:
+  mode: on_demand
+  host: 127.0.0.1
+  port: 8080
+
+agent:
+  persona: >
+    You are a production health analyst. You observe metrics and knowledge
+    context and report findings clearly. You do not take actions.
+  max_reasoning_steps: 4

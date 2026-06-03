@@ -1,0 +1,59 @@
+# Tendwell real-model demo - for the docker compose 'model' profile.
+#
+# Same synthetic scenario as the instant tier, but the narrative is written by a
+# real small local model served by Ollama (the compose 'ollama' service). Pulling
+# the model is a one-time download of a few hundred MB to ~1 GB - the honest cost
+# of "real model output". Embeddings stay deterministic (hash) so only one model
+# is pulled; retrieval is still real.
+#
+# Small models are unreliable at native tool calling, so the ReAct fallback is
+# enabled. Local-first: the only endpoint is the in-network Ollama service.
+
+llm:
+  provider: openai
+  base_url: http://ollama:11434/v1
+  model: qwen2.5:1.5b
+  capabilities:
+    native_tool_calling: false
+  fallback_max_retries: 2
+
+embeddings:
+  provider: hash
+
+data_sources:
+  - name: demo
+    type: synthetic
+    scenario: degraded
+    seed: 7
+    queries:
+      - id: error_rate
+      - id: latency_p99
+
+slos:
+  - name: availability
+    metric: error_rate
+    threshold: 0.01
+    direction: below
+  - name: latency
+    metric: latency_p99
+    threshold: 0.5
+    direction: below
+
+context:
+  vector_store:
+    type: memory
+  loaders:
+    - type: markdown
+      path: tendwell/demo/knowledge
+
+permissions:
+  mode: read_only
+
+server:
+  mode: on_demand
+
+agent:
+  persona: >
+    You are a production health analyst. You observe metrics and knowledge
+    context and report findings clearly. You do not take actions.
+  max_reasoning_steps: 6

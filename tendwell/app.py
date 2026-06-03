@@ -90,6 +90,10 @@ def build_sources(config: TendwellConfig) -> tuple[dict[str, DataSource], dict[s
 
 def build_embeddings(config: TendwellConfig) -> EmbeddingsClient:
     """Construct the configured embeddings client (local-first by default)."""
+    if config.embeddings.provider == "hash":
+        from tendwell.context.embeddings import FakeEmbeddings
+
+        return FakeEmbeddings()
     from tendwell.context.embeddings import OpenAICompatibleEmbeddings
 
     return OpenAICompatibleEmbeddings(
@@ -98,16 +102,24 @@ def build_embeddings(config: TendwellConfig) -> EmbeddingsClient:
 
 
 def build_context_store(config: TendwellConfig, embeddings: EmbeddingsClient) -> ContextStore:
-    """Construct the configured vector store. Phase 1 implements Chroma only."""
-    store_config = config.context.vector_store
-    if store_config.type != "chroma":
-        raise ConfigError(
-            f"vector store '{store_config.type}' is not implemented yet; use 'chroma'"
-        )
-    from tendwell.context.chroma_store import ChromaContextStore
+    """Construct the configured vector store.
 
-    # An empty path selects an in-memory store, which the tests use.
-    return ChromaContextStore(embeddings, path=store_config.path or None)
+    Chroma is the persistent default; ``memory`` is the dependency-free store
+    used by the instant demo and tests. ``pgvector`` and ``qdrant`` are reserved.
+    """
+    store_config = config.context.vector_store
+    if store_config.type == "memory":
+        from tendwell.context.memory_store import InMemoryContextStore
+
+        return InMemoryContextStore(embeddings)
+    if store_config.type == "chroma":
+        from tendwell.context.chroma_store import ChromaContextStore
+
+        # An empty path selects an in-memory Chroma store, which the tests use.
+        return ChromaContextStore(embeddings, path=store_config.path or None)
+    raise ConfigError(
+        f"vector store '{store_config.type}' is not implemented yet; use 'chroma' or 'memory'"
+    )
 
 
 async def index_context(store: ContextStore, config: TendwellConfig) -> None:
@@ -129,7 +141,11 @@ async def index_context(store: ContextStore, config: TendwellConfig) -> None:
 
 
 def build_llm(config: TendwellConfig) -> LLMBackend:
-    """Construct the configured OpenAI-compatible LLM backend."""
+    """Construct the configured LLM backend (OpenAI-compatible, or the stub)."""
+    if config.llm.provider == "stub":
+        from tendwell.llm.stub import StubLLMBackend
+
+        return StubLLMBackend()
     from tendwell.llm.openai_backend import OpenAICompatibleLLMBackend
 
     return OpenAICompatibleLLMBackend(config.llm, api_key=resolve_secret(config.llm.api_key_env))

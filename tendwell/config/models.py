@@ -52,8 +52,15 @@ class Capabilities(_Strict):
 
 
 class LLMConfig(_Strict):
-    """OpenAI-compatible chat backend configuration."""
+    """OpenAI-compatible chat backend configuration.
 
+    ``provider`` selects the backend: ``openai`` (the default, any
+    OpenAI-compatible endpoint) or ``stub`` (a no-network demo backend used by
+    the instant demo tier; produces a real report with deterministic facts and a
+    fixed narrative).
+    """
+
+    provider: Literal["openai", "stub"] = "openai"
     base_url: str = "http://localhost:11434/v1"
     model: str = "qwen2.5:14b"
     api_key_env: str | None = None
@@ -66,8 +73,14 @@ class LLMConfig(_Strict):
 
 
 class EmbeddingsConfig(_Strict):
-    """OpenAI-compatible embeddings backend configuration."""
+    """OpenAI-compatible embeddings backend configuration.
 
+    ``provider`` selects the backend: ``openai`` (the default, any
+    OpenAI-compatible embeddings endpoint) or ``hash`` (a deterministic,
+    no-network embedder used by the instant demo tier and tests).
+    """
+
+    provider: Literal["openai", "hash"] = "openai"
     base_url: str = "http://localhost:11434/v1"
     model: str = "nomic-embed-text"
     api_key_env: str | None = None
@@ -191,9 +204,13 @@ class SLO(_Strict):
 # Knowledge context
 # ---------------------------------------------------------------------------
 class VectorStoreConfig(_Open):
-    """Vector store backend. Chroma is the local-first default."""
+    """Vector store backend. Chroma is the local-first default.
 
-    type: Literal["chroma", "pgvector", "qdrant"] = "chroma"
+    ``memory`` is a dependency-free in-process store used by the instant demo
+    tier and tests; ``pgvector`` and ``qdrant`` are reserved for future adapters.
+    """
+
+    type: Literal["chroma", "memory", "pgvector", "qdrant"] = "chroma"
     path: str = "./data/vectors"
 
 
