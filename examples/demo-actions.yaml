@@ -1,0 +1,84 @@
+# Tendwell demo configuration - opt-in action surface.
+#
+# Identical to demo.yaml but with actions enabled, to demonstrate the
+# propose -> validate -> approve -> execute pipeline. The model can PROPOSE a
+# restart of api or worker; nothing runs until a human approves at the prompt.
+# The open core ships no real executor, so approved actions perform no real work
+# here - operators register their own executor for real infrastructure.
+#
+# This is opt-in and explicit. The default posture (read_only, no actions, no
+# egress) is unchanged; you are deliberately turning this on. Audit logging is
+# always on and cannot be disabled.
+#
+# Run it:  tendwell run --config examples/demo-actions.yaml
+
+llm:
+  base_url: http://localhost:11434/v1
+  model: qwen2.5:14b
+  capabilities:
+    native_tool_calling: true
+
+embeddings:
+  base_url: http://localhost:11434/v1
+  model: nomic-embed-text
+
+data_sources:
+  - name: demo
+    type: synthetic
+    scenario: degraded
+    seed: 7
+    queries:
+      - id: error_rate
+      - id: latency_p99
+
+slos:
+  - name: availability
+    metric: error_rate
+    threshold: 0.01
+    direction: below
+  - name: latency
+    metric: latency_p99
+    threshold: 0.5
+    direction: below
+
+context:
+  vector_store:
+    type: chroma
+    path: ./data/vectors
+  loaders:
+    - type: markdown
+      path: tendwell/demo/knowledge
+      refresh: 3600
+
+permissions:
+  mode: actions_enabled            # opt-in; default is read_only
+  actions:
+    - name: restart_service
+      require_approval: true        # mandatory; auto-approval is not available
+      scope: ["api", "worker"]      # the only targets this action may touch
+      max_targets: 2
+      parameters:
+        graceful:
+          type: boolean
+          required: false
+  safety:
+    rate_limit:
+      max_actions: 5
+      window_seconds: 60
+    circuit_breaker:
+      failure_threshold: 3
+    # kill_switch_file: ./STOP      # touch this file to halt all executions
+  audit:
+    enabled: true                   # always on; cannot be disabled
+
+server:
+  mode: on_demand
+  host: 127.0.0.1
+  port: 8080
+
+agent:
+  persona: >
+    You are a production health analyst. You observe metrics and knowledge
+    context and report findings clearly. When an action is warranted you may
+    PROPOSE it for human approval; you cannot approve or execute anything.
+  max_reasoning_steps: 6

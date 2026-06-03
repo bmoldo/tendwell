@@ -1,16 +1,21 @@
-"""The read-only health-analysis agent loop.
+"""The health-analysis agent loop.
 
 Hybrid by design: a deterministic pre-fetch evaluates every SLO without any LLM,
 so even a weak model that fails every tool call still gets a fully-populated
 snapshot to explain. The LLM then adds interpretation and correlates breaches
-with retrieved knowledge. The agent has no action surface in Phase 1; it
-observes and reports only.
+with retrieved knowledge.
+
+The agent is read-only unless an action surface is wired in. Even then, the model
+can only PROPOSE actions through the surface's tool; proposals are validated and
+collected during the run but never executed here. Executing a proposal is a
+separate, human-gated step the agent has no path to.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from tendwell.config.models import SLO, AgentConfig
 from tendwell.core.reasoning import NativeToolDriver, ReActDriver
@@ -25,6 +30,9 @@ from tendwell.core.types import (
 from tendwell.interfaces.context_store import ContextStore, RetrievedChunk
 from tendwell.interfaces.data_source import DataSource
 from tendwell.interfaces.llm import LLMBackend
+
+if TYPE_CHECKING:
+    from tendwell.actions.pipeline import GatedActionSurface
 
 
 def _evaluate(value: float, threshold: float, direction: str) -> SLOState:
@@ -86,6 +94,7 @@ class HealthAnalyzer:
         llm: LLMBackend,
         agent_config: AgentConfig,
         fallback_max_retries: int = 2,
+        action_surface: GatedActionSurface | None = None,
     ) -> None:
         self._sources = dict(sources)
         self._query_owners = dict(query_owners)
@@ -94,6 +103,7 @@ class HealthAnalyzer:
         self._llm = llm
         self._agent = agent_config
         self._fallback_max_retries = fallback_max_retries
+        self._action_surface = action_surface
 
     async def _build_snapshot(self) -> HealthSnapshot:
         statuses: list[SLOStatus] = []
@@ -191,7 +201,12 @@ class HealthAnalyzer:
         )
 
     async def analyze(self, question: str | None = None) -> HealthReport:
-        """Run one read-only health analysis and return a report."""
+        """Run one health analysis and return a report.
+
+        Any action proposals the model makes are validated and collected on the
+        configured surface; they are returned in the report as pending and are
+        not executed here.
+        """
         snapshot = await self._build_snapshot()
 
         query = self._retrieval_query(snapshot, question)
@@ -206,7 +221,9 @@ class HealthAnalyzer:
             for c in chunks
         )
 
-        executor = ToolExecutor(self._sources, self._store, snapshot)
+        executor = ToolExecutor(
+            self._sources, self._store, snapshot, action_surface=self._action_surface
+        )
         driver = (
             NativeToolDriver(self._llm)
             if self._llm.supports_native_tool_calling
@@ -221,6 +238,7 @@ class HealthAnalyzer:
         )
 
         summary = result.answer.strip() or deterministic_summary(snapshot)
+        proposals = tuple(self._action_surface.pending) if self._action_surface is not None else ()
         return HealthReport(
             overall=snapshot.overall_severity,
             summary=summary,
@@ -228,4 +246,5 @@ class HealthAnalyzer:
             citations=citations,
             truncated=result.truncated,
             truncation_note=result.note,
+            proposals=proposals,
         )

@@ -13,8 +13,11 @@ no model.
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 from tendwell.config.models import (
+    HttpJsonSourceConfig,
+    LokiSourceConfig,
     PrometheusSourceConfig,
     SyntheticSourceConfig,
     TendwellConfig,
@@ -25,6 +28,12 @@ from tendwell.core.types import HealthReport
 from tendwell.interfaces.context_store import ContextStore
 from tendwell.interfaces.data_source import DataSource
 from tendwell.interfaces.llm import LLMBackend
+
+if TYPE_CHECKING:
+    from tendwell.actions.approval import ApprovalGate
+    from tendwell.actions.executor import ActionExecutor
+    from tendwell.actions.pipeline import GatedActionSurface
+    from tendwell.actions.types import ActionResult
 
 
 class ConfigError(Exception):
@@ -57,6 +66,20 @@ def build_sources(config: TendwellConfig) -> tuple[dict[str, DataSource], dict[s
             synthetic = SyntheticSourceConfig.model_validate(raw)
             sources[synthetic.name] = SyntheticDataSource(synthetic)
             query_ids = [q.id for q in synthetic.queries]
+        elif source_config.type == "loki":
+            from tendwell.sources.loki import LokiDataSource
+
+            loki = LokiSourceConfig.model_validate(raw)
+            sources[loki.name] = LokiDataSource(loki, token=resolve_secret(loki.auth.token_env))
+            query_ids = [q.id for q in loki.queries]
+        elif source_config.type == "http_json":
+            from tendwell.sources.http_json import HttpJsonDataSource
+
+            http_json = HttpJsonSourceConfig.model_validate(raw)
+            sources[http_json.name] = HttpJsonDataSource(
+                http_json, token=resolve_secret(http_json.auth.token_env)
+            )
+            query_ids = [q.id for q in http_json.queries]
         else:
             raise ConfigError(f"unknown data source type: {source_config.type!r}")
 
@@ -112,14 +135,63 @@ def build_llm(config: TendwellConfig) -> LLMBackend:
     return OpenAICompatibleLLMBackend(config.llm, api_key=resolve_secret(config.llm.api_key_env))
 
 
+def build_action_surface(
+    config: TendwellConfig,
+    *,
+    executor: ActionExecutor,
+    gate: ApprovalGate,
+    audit_path: str | None = "./data/audit.jsonl",
+) -> GatedActionSurface | None:
+    """Construct the action surface, or ``None`` when actions are not enabled.
+
+    Returns ``None`` for the default read-only posture: with no surface, the
+    agent is structurally unable to mutate anything. Audit is always on; there is
+    no path to disable it.
+    """
+    permissions = config.permissions
+    if permissions.mode != "actions_enabled" or not permissions.actions:
+        return None
+
+    import time
+
+    from tendwell.actions.allowlist import ActionAllowlist
+    from tendwell.actions.audit import AuditLog
+    from tendwell.actions.guards import (
+        ActionGuards,
+        CircuitBreaker,
+        KillSwitch,
+        RateLimiter,
+    )
+    from tendwell.actions.pipeline import GatedActionSurface
+
+    safety = permissions.safety
+    guards = ActionGuards(
+        kill_switch=KillSwitch(safety.kill_switch_file),
+        rate_limiter=RateLimiter(safety.rate_limit, time.monotonic),
+        circuit_breaker=CircuitBreaker(safety.circuit_breaker),
+    )
+    return GatedActionSurface(
+        allowlist=ActionAllowlist(permissions.actions),
+        guards=guards,
+        audit=AuditLog(path=audit_path),
+        executor=executor,
+        gate=gate,
+    )
+
+
 async def run_analysis(
     config: TendwellConfig,
     question: str | None = None,
     *,
     llm: LLMBackend | None = None,
     embeddings: EmbeddingsClient | None = None,
+    action_surface: GatedActionSurface | None = None,
 ) -> HealthReport:
-    """Build the full stack from config, index context, and run one analysis."""
+    """Build the full stack from config, index context, and run one analysis.
+
+    When ``action_surface`` is provided, the model may propose actions through it;
+    proposals are validated and collected but never executed here.
+    """
     sources, query_owners = build_sources(config)
     store = build_context_store(config, embeddings or build_embeddings(config))
     await index_context(store, config)
@@ -131,6 +203,7 @@ async def run_analysis(
         llm=llm or build_llm(config),
         agent_config=config.agent,
         fallback_max_retries=config.llm.fallback_max_retries,
+        action_surface=action_surface,
     )
     try:
         return await analyzer.analyze(question)
@@ -138,3 +211,37 @@ async def run_analysis(
         for source in sources.values():
             await source.close()
         await store.close()
+
+
+async def run_on_demand(
+    config: TendwellConfig,
+    question: str | None = None,
+    *,
+    llm: LLMBackend | None = None,
+    embeddings: EmbeddingsClient | None = None,
+    executor: ActionExecutor | None = None,
+    gate: ApprovalGate | None = None,
+) -> tuple[HealthReport, list[ActionResult]]:
+    """Run an analysis and then process any proposals through the human gate.
+
+    Analysis and execution are separate phases: the model proposes during
+    analysis, and only afterwards are validated proposals taken through human
+    approval and (if approved) the executor. With actions disabled, the second
+    phase is a no-op and no surface exists.
+    """
+    surface: GatedActionSurface | None = None
+    if config.permissions.mode == "actions_enabled" and config.permissions.actions:
+        from tendwell.actions.approval import CLIApprovalGate
+        from tendwell.actions.executor import FakeActionExecutor
+
+        surface = build_action_surface(
+            config,
+            executor=executor or FakeActionExecutor(),
+            gate=gate or CLIApprovalGate(),
+        )
+
+    report = await run_analysis(
+        config, question, llm=llm, embeddings=embeddings, action_surface=surface
+    )
+    results = await surface.process_pending() if surface is not None else []
+    return report, results

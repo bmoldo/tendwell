@@ -20,7 +20,23 @@ from tendwell.interfaces.data_source import DataSource, QueryResult
 from tendwell.interfaces.llm import ToolSpec
 
 if TYPE_CHECKING:
+    from tendwell.actions.pipeline import GatedActionSurface
     from tendwell.core.types import HealthSnapshot
+
+
+class ProposeActionInput(BaseModel):
+    """Arguments for the ``propose_action`` tool.
+
+    Recording a proposal executes nothing; the agent cannot approve or run it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: str
+    targets: list[str] = []
+    parameters: dict[str, object] = {}
+    reason: str
+    dry_run: bool = False
 
 
 class _ToolInput(BaseModel):
@@ -143,14 +159,23 @@ class ToolExecutor:
         sources: Mapping[str, DataSource],
         context_store: ContextStore,
         snapshot: HealthSnapshot,
+        action_surface: GatedActionSurface | None = None,
     ) -> None:
         self._sources = dict(sources)
         self._store = context_store
         self.snapshot = snapshot
+        self._action_surface = action_surface
 
     def tool_specs(self) -> list[ToolSpec]:
-        """Tool schemas to advertise to the model."""
-        return tool_specs()
+        """Tool schemas to advertise to the model.
+
+        ``propose_action`` appears only when an action surface is configured;
+        with none, the model has no action-related tool at all.
+        """
+        specs = tool_specs()
+        if self._action_surface is not None:
+            specs.append(self._action_surface.propose_tool_spec())
+        return specs
 
     async def execute(self, name: str, arguments: Mapping[str, object]) -> dict[str, object]:
         """Run a tool call, always returning a structured observation.
@@ -159,6 +184,9 @@ class ToolExecutor:
         ``{"ok": False, "error": ...}`` on any validation or execution problem.
         Never raises for bad model input.
         """
+        if name == "propose_action" and self._action_surface is not None:
+            return self._propose_action(arguments)
+
         model = _INPUT_MODELS.get(name)
         if model is None:
             return {
@@ -204,6 +232,44 @@ class ToolExecutor:
     async def _search_knowledge(self, args: SearchKnowledgeInput) -> dict[str, object]:
         chunks = await self._store.retrieve(args.query, k=args.k)
         return {"ok": True, "result": [chunk_to_dict(c) for c in chunks]}
+
+    def _propose_action(self, arguments: Mapping[str, object]) -> dict[str, object]:
+        """Record an action proposal for human approval. Executes nothing.
+
+        The observation makes explicit that the proposal is only recorded and
+        that the model can neither approve nor run it.
+        """
+        assert self._action_surface is not None
+        try:
+            args = ProposeActionInput.model_validate(dict(arguments))
+        except ValidationError as exc:
+            return {
+                "ok": False,
+                "error": f"invalid propose_action arguments: {exc.errors(include_url=False)}",
+            }
+        proposal, outcome = self._action_surface.propose(
+            action=args.action,
+            targets=args.targets,
+            parameters=args.parameters,
+            reason=args.reason,
+            dry_run=args.dry_run,
+        )
+        if proposal is None:
+            return {
+                "ok": False,
+                "error": f"proposal rejected by validation: {outcome.code} - {outcome.message}",
+            }
+        return {
+            "ok": True,
+            "result": {
+                "proposal_id": proposal.id,
+                "status": "recorded; pending human approval",
+                "note": (
+                    "This is recorded only. You cannot approve or execute it; a "
+                    "human must approve before anything happens."
+                ),
+            },
+        }
 
 
 def observation_json(observation: Mapping[str, object]) -> str:

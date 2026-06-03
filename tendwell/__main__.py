@@ -50,7 +50,7 @@ def _cmd_validate(path: str) -> int:
 
 
 def _cmd_run(path: str, question: str | None) -> int:
-    from tendwell.app import run_analysis
+    from tendwell.app import run_on_demand
     from tendwell.output.console import ConsoleOutputSink
     from tendwell.output.findings import report_to_findings
 
@@ -64,8 +64,13 @@ def _cmd_run(path: str, question: str | None) -> int:
         return 1
 
     async def _go() -> None:
-        report = await run_analysis(config, question)
+        report, results = await run_on_demand(config, question)
         await ConsoleOutputSink().emit(report_to_findings(report))
+        for result in results:
+            print(
+                f"\naction {result.action} [{result.state}]: {result.detail}"
+                + (f" (approved by {result.approver})" if result.approver else "")
+            )
 
     asyncio.run(_go())
     return 0

@@ -12,9 +12,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from tendwell.interfaces.data_source import MetricSample
 from tendwell.interfaces.output import Severity
+
+if TYPE_CHECKING:
+    from tendwell.actions.types import ActionProposal
 
 
 class SLOState(StrEnum):
@@ -100,3 +104,6 @@ class HealthReport:
     recommendations: Sequence[str] = field(default_factory=tuple)
     truncated: bool = False
     truncation_note: str | None = None
+    # Validated proposals the model made this run, awaiting human approval. These
+    # have NOT executed; processing them is a separate, human-gated step.
+    proposals: Sequence[ActionProposal] = field(default_factory=tuple)
