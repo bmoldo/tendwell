@@ -1,0 +1,61 @@
+# Tendwell demo configuration - ReAct fallback path.
+#
+# Identical to demo.yaml except the model declares no reliable native tool
+# calling, so the agent drives tools through the prompt-based ReAct fallback with
+# strict output parsing. Use this to exercise the fallback against a real local
+# model that struggles with native tool calls.
+#
+# Run it:  tendwell run --config examples/demo-react.yaml
+
+llm:
+  base_url: http://localhost:11434/v1
+  model: qwen2.5:14b
+  capabilities:
+    native_tool_calling: false
+  fallback_max_retries: 2
+
+embeddings:
+  base_url: http://localhost:11434/v1
+  model: nomic-embed-text
+
+data_sources:
+  - name: demo
+    type: synthetic
+    scenario: degraded
+    seed: 7
+    queries:
+      - id: error_rate
+      - id: latency_p99
+
+slos:
+  - name: availability
+    metric: error_rate
+    threshold: 0.01
+    direction: below
+  - name: latency
+    metric: latency_p99
+    threshold: 0.5
+    direction: below
+
+context:
+  vector_store:
+    type: chroma
+    path: ./data/vectors
+  loaders:
+    - type: markdown
+      path: tendwell/demo/knowledge
+      refresh: 3600
+
+permissions:
+  mode: read_only
+
+server:
+  mode: on_demand
+  host: 127.0.0.1
+  port: 8080
+
+agent:
+  persona: >
+    You are a production health analyst. You observe metrics and knowledge
+    context, and you report findings clearly. You do not take actions.
+  max_reasoning_steps: 6

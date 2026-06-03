@@ -1,0 +1,140 @@
+"""Application wiring: build the agent and its adapters from validated config.
+
+This is the single place that turns a ``TendwellConfig`` into running
+components. Concrete adapters (which pull in optional dependencies like openai,
+httpx, chromadb) are imported lazily so that injecting fakes in tests does not
+require those packages, and so an unused adapter never forces its dependency.
+
+``llm`` and ``embeddings`` can be injected, which is how the end-to-end tests run
+the real wiring (synthetic source, Chroma store, agent loop) with no network and
+no model.
+"""
+
+from __future__ import annotations
+
+import os
+
+from tendwell.config.models import (
+    PrometheusSourceConfig,
+    SyntheticSourceConfig,
+    TendwellConfig,
+)
+from tendwell.context.embeddings import EmbeddingsClient
+from tendwell.core.agent import HealthAnalyzer
+from tendwell.core.types import HealthReport
+from tendwell.interfaces.context_store import ContextStore
+from tendwell.interfaces.data_source import DataSource
+from tendwell.interfaces.llm import LLMBackend
+
+
+class ConfigError(Exception):
+    """A configuration value is valid in shape but cannot be wired up."""
+
+
+def resolve_secret(env_name: str | None) -> str | None:
+    """Read a secret from the named environment variable, if any."""
+    if not env_name:
+        return None
+    return os.environ.get(env_name)
+
+
+def build_sources(config: TendwellConfig) -> tuple[dict[str, DataSource], dict[str, str]]:
+    """Construct every configured data source and a query-id -> source map."""
+    sources: dict[str, DataSource] = {}
+    query_owners: dict[str, str] = {}
+    for source_config in config.data_sources:
+        raw = source_config.model_dump()
+        if source_config.type == "prometheus":
+            from tendwell.sources.prometheus import PrometheusDataSource
+
+            prom = PrometheusSourceConfig.model_validate(raw)
+            token = resolve_secret(prom.auth.token_env)
+            sources[prom.name] = PrometheusDataSource(prom, token=token)
+            query_ids = [q.id for q in prom.queries]
+        elif source_config.type == "synthetic":
+            from tendwell.demo.synthetic import SyntheticDataSource
+
+            synthetic = SyntheticSourceConfig.model_validate(raw)
+            sources[synthetic.name] = SyntheticDataSource(synthetic)
+            query_ids = [q.id for q in synthetic.queries]
+        else:
+            raise ConfigError(f"unknown data source type: {source_config.type!r}")
+
+        for query_id in query_ids:
+            query_owners[query_id] = source_config.name
+    return sources, query_owners
+
+
+def build_embeddings(config: TendwellConfig) -> EmbeddingsClient:
+    """Construct the configured embeddings client (local-first by default)."""
+    from tendwell.context.embeddings import OpenAICompatibleEmbeddings
+
+    return OpenAICompatibleEmbeddings(
+        config.embeddings, api_key=resolve_secret(config.embeddings.api_key_env)
+    )
+
+
+def build_context_store(config: TendwellConfig, embeddings: EmbeddingsClient) -> ContextStore:
+    """Construct the configured vector store. Phase 1 implements Chroma only."""
+    store_config = config.context.vector_store
+    if store_config.type != "chroma":
+        raise ConfigError(
+            f"vector store '{store_config.type}' is not implemented yet; use 'chroma'"
+        )
+    from tendwell.context.chroma_store import ChromaContextStore
+
+    # An empty path selects an in-memory store, which the tests use.
+    return ChromaContextStore(embeddings, path=store_config.path or None)
+
+
+async def index_context(store: ContextStore, config: TendwellConfig) -> None:
+    """Run every configured context loader and upsert its documents."""
+    for loader_config in config.context.loaders:
+        if loader_config.type != "markdown":
+            raise ConfigError(f"context loader '{loader_config.type}' is not implemented yet")
+        if not loader_config.path:
+            raise ConfigError("markdown loader requires a 'path'")
+        from tendwell.context.markdown_loader import MarkdownContextLoader
+
+        extra = loader_config.model_dump()
+        loader = MarkdownContextLoader(
+            path=loader_config.path,
+            chunk_size=int(extra.get("chunk_size", 800)),
+            chunk_overlap=int(extra.get("chunk_overlap", 150)),
+        )
+        await store.upsert(await loader.load())
+
+
+def build_llm(config: TendwellConfig) -> LLMBackend:
+    """Construct the configured OpenAI-compatible LLM backend."""
+    from tendwell.llm.openai_backend import OpenAICompatibleLLMBackend
+
+    return OpenAICompatibleLLMBackend(config.llm, api_key=resolve_secret(config.llm.api_key_env))
+
+
+async def run_analysis(
+    config: TendwellConfig,
+    question: str | None = None,
+    *,
+    llm: LLMBackend | None = None,
+    embeddings: EmbeddingsClient | None = None,
+) -> HealthReport:
+    """Build the full stack from config, index context, and run one analysis."""
+    sources, query_owners = build_sources(config)
+    store = build_context_store(config, embeddings or build_embeddings(config))
+    await index_context(store, config)
+    analyzer = HealthAnalyzer(
+        sources=sources,
+        query_owners=query_owners,
+        slos=config.slos,
+        context_store=store,
+        llm=llm or build_llm(config),
+        agent_config=config.agent,
+        fallback_max_retries=config.llm.fallback_max_retries,
+    )
+    try:
+        return await analyzer.analyze(question)
+    finally:
+        for source in sources.values():
+            await source.close()
+        await store.close()
